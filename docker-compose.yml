@@ -1,0 +1,134 @@
+name: eventos-platform
+
+services:
+  # ------------------------------------------------------------------
+  # Infraestructura
+  # ------------------------------------------------------------------
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: eventos-rabbitmq
+    ports:
+      - "5672:5672"   # AMQP
+      - "15672:15672" # UI de administración (guest/guest)
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres-events:
+    image: postgres:16-alpine
+    container_name: eventos-postgres
+    environment:
+      POSTGRES_DB: eventservice
+      POSTGRES_USER: eventservice
+      POSTGRES_PASSWORD: devpassword
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-events-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U eventservice"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mongo:
+    image: mongo:7
+    container_name: eventos-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: eventos-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: eventos-mailpit
+    ports:
+      - "8025:8025" # UI web para ver correos enviados
+      - "1025:1025" # SMTP
+
+  # ------------------------------------------------------------------
+  # APIs .NET
+  # ------------------------------------------------------------------
+  api-event:
+    build:
+      context: ./backend
+      dockerfile: EventService/Dockerfile
+    container_name: eventos-api-event
+    ports:
+      - "8080:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__Postgres: "Host=postgres-events;Port=5432;Database=eventservice;Username=eventservice;Password=devpassword"
+      ConnectionStrings__Redis: "redis:6379"
+      RabbitMq__Host: rabbitmq
+      RabbitMq__User: guest
+      RabbitMq__Password: guest
+      Jwt__Issuer: eventos-platform
+      Jwt__Audience: eventos-platform-clients
+      Jwt__SigningKey: "CHANGE_ME_SUPER_SECRET_KEY_MIN_32_CHARS_LONG"
+      Cors__AllowedOrigin: "http://localhost:5173"
+    depends_on:
+      postgres-events:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  api-notifications:
+    build:
+      context: ./backend
+      dockerfile: NotificationService/Dockerfile
+    container_name: eventos-api-notifications
+    ports:
+      - "8082:8081"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__Mongo: "mongodb://mongo:27017"
+      Mongo__Database: notificationservice
+      RabbitMq__Host: rabbitmq
+      RabbitMq__User: guest
+      RabbitMq__Password: guest
+      Smtp__Host: mailpit
+      Smtp__Port: "1025"
+      Smtp__From: "no-reply@eventos-platform.local"
+    depends_on:
+      mongo:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  # ------------------------------------------------------------------
+  # Frontend
+  # ------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: eventos-frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - api-event
+
+volumes:
+  postgres-events-data:
+  mongo-data:
