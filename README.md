@@ -69,7 +69,6 @@ Servicios expuestos:
 ## Generar un JWT de prueba (rol Admin)
 
 El MVP usa una clave simétrica de firma (`Jwt:SigningKey` en `appsettings.json`) para simplificar la demo. Para generar un token de prueba localmente (por ejemplo con `dotnet-jwt-cli`, jwt.io, o un pequeño script), los claims mínimos requeridos son:
-
 ```json
 {
   "sub": "admin-demo",
@@ -77,6 +76,35 @@ El MVP usa una clave simétrica de firma (`Jwt:SigningKey` en `appsettings.json`
   "iss": "eventos-platform",
   "aud": "eventos-platform-clients"
 }
+```
+O tambien desde PowerShell:
+
+```pwsh
+$secret = [System.Text.Encoding]::UTF8.GetBytes("CHANGE_ME_SUPER_SECRET_KEY_MIN_32_CHARS_LONG")
+$header = @{ alg = "HS256"; typ = "JWT" } | ConvertTo-Json -Compress
+$payload = @{
+    sub = "admin-demo"
+    role = "Admin"
+    iss = "eventos-platform"
+    aud = "eventos-platform-clients"
+    exp = ([DateTimeOffset]::UtcNow.AddDays(7)).ToUnixTimeSeconds()
+} | ConvertTo-Json -Compress
+
+function Base64UrlEncode([byte[]]$bytes) {
+    [Convert]::ToBase64String($bytes).Split('=')[0].Replace('+','-').Replace('/','_')
+}
+
+$headerEncoded = Base64UrlEncode ([System.Text.Encoding]::UTF8.GetBytes($header))
+$payloadEncoded = Base64UrlEncode ([System.Text.Encoding]::UTF8.GetBytes($payload))
+$stringToSign = "$headerEncoded.$payloadEncoded"
+
+$hmac = New-Object System.Security.Cryptography.HMACSHA256
+$hmac.Key = $secret
+$signature = Base64UrlEncode ($hmac.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($stringToSign)))
+
+$jwt = "$stringToSign.$signature"
+Write-Output "JWT Generado:"
+Write-Output $jwt
 ```
 
 Firmar con HS256 usando la misma `SigningKey` configurada en `docker-compose.yml` (`CHANGE_ME_SUPER_SECRET_KEY_MIN_32_CHARS_LONG`). Copiar el token generado a `frontend/.env` en `VITE_DEMO_JWT`.
